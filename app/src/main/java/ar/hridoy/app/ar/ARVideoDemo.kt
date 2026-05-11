@@ -97,6 +97,7 @@ fun ARVideoDemo(
 
     val detectedImages = remember { mutableStateListOf<AugmentedImage>() }
     val trackingStates = remember { mutableStateMapOf<Int, TrackingState>() }
+    val trackingMethods = remember { mutableStateMapOf<Int, AugmentedImage.TrackingMethod>() }
     var activeImageIndex by remember { mutableIntStateOf(-1) }
 
     val activeEnvironment = rememberHDREnvironment(
@@ -152,6 +153,7 @@ fun ARVideoDemo(
             // Update tracking states for all images
             allImages.forEach { image ->
                 trackingStates[image.index] = image.trackingState
+                trackingMethods[image.index] = image.trackingMethod
             }
 
             // Find images that are actually being tracked (FULL_TRACKING)
@@ -167,13 +169,11 @@ fun ARVideoDemo(
                 }
             }
 
-            // The active image is the one currently being tracked.
-            // If multiple are tracked, we pick the first one.
-            // If NONE are tracked, we keep the last active one to allow the 1-min timeout.
+            // Update the active image index to the one currently being tracked.
+            // If multiple are tracked, we pick the first one to avoid "overtaking".
             val currentTrackedImage = trackingImages.firstOrNull()
             if (currentTrackedImage != null) {
                 if (activeImageIndex != currentTrackedImage.index) {
-                    Timber.tag(TAG).d("Switching active video to: %d", currentTrackedImage.index)
                     activeImageIndex = currentTrackedImage.index
                 }
             }
@@ -221,8 +221,8 @@ fun ARVideoDemo(
                             }
                             var isReady by remember(image.index) { mutableStateOf(false) }
                             var error by remember(image.index) { mutableStateOf<String?>(null) }
-                            var isTrackingStable by remember(image.index) { mutableStateOf(false) }
                             var showLoading by remember(image.index) { mutableStateOf(false) }
+                            var retryCount by remember(image.index) { mutableIntStateOf(0) }
 
                             var isNodePlaying by remember(image.index) { mutableStateOf(isPlaying) }
                             var isTimedOut by remember(image.index) { mutableStateOf(false) }
@@ -230,12 +230,16 @@ fun ARVideoDemo(
                             var youTubePlayerInstance by remember(image.index) { mutableStateOf<YouTubePlayer?>(null) }
 
                             val currentTrackingState = trackingStates[image.index] ?: TrackingState.STOPPED
-                            val isCurrentlyTracking = currentTrackingState == TrackingState.TRACKING
+                            val currentTrackingMethod = trackingMethods[image.index] ?: AugmentedImage.TrackingMethod.NOT_TRACKING
+                            
+                            // "In Focus" means it's actively tracked by the camera and is the primary image
+                            val isInFocus = currentTrackingState == TrackingState.TRACKING && 
+                                           currentTrackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING &&
+                                           image.index == activeImageIndex
 
-                            LaunchedEffect(activeImageIndex, isCurrentlyTracking, isPlaying, isUserPaused, isTimedOut) {
+                            LaunchedEffect(isInFocus, isPlaying, isUserPaused, isTimedOut) {
                                 val shouldPlay = isPlaying && 
-                                               isCurrentlyTracking && 
-                                               activeImageIndex == image.index && 
+                                               isInFocus && 
                                                !isUserPaused && 
                                                !isTimedOut
                                 
@@ -243,14 +247,11 @@ fun ARVideoDemo(
                             }
 
                             LaunchedEffect(image.index) {
-                                // Reduced delays for faster feedback
-                                delay(200)
                                 showLoading = true
-                                isTrackingStable = true
                             }
 
-                            val player = if (!isYouTube && isTrackingStable) {
-                                remember(image.index) {
+                            val player = if (!isYouTube) {
+                                remember(image.index, retryCount) {
                                     MediaPlayer().apply {
                                         setAudioAttributes(
                                             AudioAttributes.Builder()
@@ -271,24 +272,25 @@ fun ARVideoDemo(
                                             setDataSource(videoTarget.videoUrl)
                                             setOnPreparedListener {
                                                 isReady = true
+                                                error = null
                                                 start()
                                             }
                                             prepareAsync()
                                         } catch (e: Exception) {
                                             Timber.tag(TAG).e(e, "Player failed")
-                                            error = e.localizedMessage
+                                            error = "Fetch Failed: ${e.localizedMessage}"
                                         }
                                     }
                                 }
                             } else null
                             DisposableEffect(player) { onDispose { player?.release() } }
 
-                            // Timeout & Stop Logic: If not tracked for 1 minute, reset the video to the beginning
-                            LaunchedEffect(isCurrentlyTracking) {
-                                if (!isCurrentlyTracking) {
-                                    Timber.tag(TAG).d("Image %d tracking lost, waiting for 1min timeout", image.index)
-                                    delay(60000)
-                                    if (trackingStates[image.index] != TrackingState.TRACKING) {
+                            // Timeout & Stop Logic: If not in focus for 15 seconds, reset the video
+                            LaunchedEffect(isInFocus) {
+                                if (!isInFocus) {
+                                    Timber.tag(TAG).d("Image %d lost focus, waiting for 15s timeout", image.index)
+                                    delay(15000)
+                                    if (!isInFocus) {
                                         Timber.tag(TAG).d("Image %d timeout reached, resetting video", image.index)
                                         isTimedOut = true
                                         // Stop and seek back to 0
@@ -355,8 +357,9 @@ fun ARVideoDemo(
                                 augmentedImage = image,
                                 applyImageScale = false,
                                 apply = {
-                                    isTouchable = false // Background image does not respond to touch
-                                    onSingleTapUp = { false } // Explicitly ignore background taps
+                                    isVisible = isInFocus // Only show the node if it's in focus
+                                    isTouchable = false
+                                    onSingleTapUp = { false }
                                 }
                             ) {
                                 if (error == null) {
@@ -414,7 +417,7 @@ fun ARVideoDemo(
                                 }
 
                                 // 🔹 Pause Icon Overlay: Show when the video is paused
-                                if (!isNodePlaying && isReady && isCurrentlyTracking) {
+                                if (!isNodePlaying && isReady && isInFocus) {
                                     ViewNode(
                                         windowManager = viewNodeManager,
                                         unlit = true,
@@ -452,25 +455,39 @@ fun ARVideoDemo(
                                         rotation = Float3(-90f, 0f, 0f),
                                         scale = Float3(1f, 1f, 1f),
                                         apply = {
-                                            isTouchable = false // Loading indicator is not touchable
+                                            isTouchable = true
+                                            onSingleTapUp = {
+                                                if (error != null) {
+                                                    error = null
+                                                    retryCount++
+                                                    true
+                                                } else false
+                                            }
                                             pxPerUnits = 2000f
                                         }
                                     ) {
                                         Box(
-                                            modifier = Modifier.size(30.dp),
+                                            modifier = Modifier.size(40.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             if (error != null) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Error,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.error,
-                                                    modifier = Modifier.size(30.dp)
-                                                )
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Error,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.error,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                    Text(
+                                                        "Tap to retry",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.error
+                                                    )
+                                                }
                                             } else {
                                                 CircularProgressIndicator(
-                                                    modifier = Modifier.size(30.dp),
-                                                    strokeWidth = 1.5.dp
+                                                    modifier = Modifier.size(24.dp),
+                                                    strokeWidth = 2.dp
                                                 )
                                             }
                                         }
