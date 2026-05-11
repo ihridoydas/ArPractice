@@ -246,6 +246,7 @@ fun SceneScope.YouTubeNode(
         scale = scale,
         apply = {
             addChildNode(node)
+            node.apply(apply)
         },
         content = content
     )
