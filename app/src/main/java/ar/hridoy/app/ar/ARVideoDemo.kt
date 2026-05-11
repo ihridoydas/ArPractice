@@ -44,9 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.unit.dp
-import ar.hridoy.app.R
 import com.google.ar.core.AugmentedImage
 import com.google.ar.core.AugmentedImageDatabase
 import com.google.ar.core.Config
@@ -110,6 +108,11 @@ fun ARVideoDemo(
                 name = "sakurahd",
                 imageAssetPath = "augmented_images/sakurahd.jpg",
                 videoUrl = "https://www.pexels.com/download/video/31313620/"
+            ),
+            AugmentedVideo(
+                name = "cute",
+                imageAssetPath = "augmented_images/cute.jpeg",
+                videoUrl = "https://youtu.be/a7M4YuI-2yM"
             )
         )
     }
@@ -117,7 +120,46 @@ fun ARVideoDemo(
     val bitmaps = remember(context) {
         augmentedVideoTargets.associate { target ->
             target.name to context.assets.open(target.imageAssetPath)
-                .use { stream -> BitmapFactory.decodeStream(stream)!! }
+                .use { inputStream -> BitmapFactory.decodeStream(inputStream)!! }
+        }
+    }
+
+    val onSessionConfiguration = remember(bitmaps) {
+        { session: Session, config: Config ->
+            config.planeFindingMode = Config.PlaneFindingMode.DISABLED
+            config.augmentedImageDatabase = AugmentedImageDatabase(session).apply {
+                augmentedVideoTargets.forEach { target ->
+                    bitmaps[target.name]?.let { bitmap ->
+                        addImage(target.name, bitmap, target.widthInMeters)
+                    }
+                }
+            }
+            // Optimize for image tracking
+            config.focusMode = Config.FocusMode.AUTO
+        }
+    }
+
+    val onSessionUpdated = remember {
+        { _: Session, frame: Frame ->
+            val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
+            updatedImages.forEach { image ->
+                if (image.trackingState == TrackingState.TRACKING && image.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING) {
+                    if (detectedImages.none { it.index == image.index }) {
+                        Timber.tag(TAG).d("Image detected: %s at index %d", image.name, image.index)
+                        detectedImages.add(image)
+                        if (activeImageIndex == -1) activeImageIndex = image.index
+                    }
+                }
+            }
+
+            // Select the image closest to the camera center as active, with a bit of hysteresis
+            val centerImage = updatedImages
+                .firstOrNull { it.trackingState == TrackingState.TRACKING && it.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING }
+
+            if (centerImage != null && activeImageIndex != centerImage.index) {
+                Timber.tag(TAG).d("Active image changed to: %d", centerImage.index)
+                activeImageIndex = centerImage.index
+            }
         }
     }
 
@@ -148,45 +190,19 @@ fun ARVideoDemo(
                     environment = activeEnvironment,
                     planeRenderer = false,
                     viewNodeWindowManager = viewNodeManager,
-                    sessionConfiguration = { session, config ->
-                        config.planeFindingMode = Config.PlaneFindingMode.DISABLED
-                        config.augmentedImageDatabase = AugmentedImageDatabase(session).apply {
-                            augmentedVideoTargets.forEach { target ->
-                                addImage(target.name, bitmaps[target.name], target.widthInMeters)
-                            }
-                        }
-                        // Optimize for image tracking
-                        config.focusMode = Config.FocusMode.AUTO
-                    },
-                    onSessionUpdated = { _: Session, frame: Frame ->
-                        val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
-                        updatedImages.forEach { image ->
-                            if (image.trackingState == TrackingState.TRACKING && image.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING) {
-                                if (detectedImages.none { it.index == image.index }) {
-                                    Timber.tag(TAG).d("Image detected: %s at index %d", image.name, image.index)
-                                    detectedImages.add(image)
-                                    if (activeImageIndex == -1) activeImageIndex = image.index
-                                }
-                            }
-                        }
-
-                        // Select the image closest to the camera center as active, with a bit of hysteresis
-                        val centerImage = updatedImages
-                            .filter { it.trackingState == TrackingState.TRACKING && it.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING }
-                            .firstOrNull()
-
-                        if (centerImage != null && activeImageIndex != centerImage.index) {
-                            Timber.tag(TAG).d("Active image changed to: %d", centerImage.index)
-                            activeImageIndex = centerImage.index
-                        }
-                    }
+                    sessionConfiguration = onSessionConfiguration,
+                    onSessionUpdated = onSessionUpdated
                 ) {
                     detectedImages.forEach { image ->
                         val videoTarget =
                             augmentedVideoTargets.find { it.name == image.name } ?: return@forEach
                         key(image.index) {
+                            val isYouTube = remember(videoTarget.videoUrl) {
+                                videoTarget.videoUrl.contains("youtube.com") || videoTarget.videoUrl.contains(
+                                    "youtu.be"
+                                )
+                            }
                             var isReady by remember(image.index) { mutableStateOf(false) }
-                            var isBuffering by remember(image.index) { mutableStateOf(true) }
                             var error by remember(image.index) { mutableStateOf<String?>(null) }
                             var isTrackingStable by remember(image.index) { mutableStateOf(false) }
                             var showLoading by remember(image.index) { mutableStateOf(false) }
@@ -200,7 +216,7 @@ fun ARVideoDemo(
                                 isTrackingStable = true
                             }
 
-                            val player = if (isTrackingStable) {
+                            val player = if (!isYouTube && isTrackingStable) {
                                 remember(image.index) {
                                     MediaPlayer().apply {
                                         setAudioAttributes(
@@ -211,36 +227,23 @@ fun ARVideoDemo(
                                         )
                                         isLooping = true
                                         setVolume(0f, 0f)
-                                        setOnInfoListener { _, what, _ ->
-                                            when (what) {
-                                                MediaPlayer.MEDIA_INFO_BUFFERING_START -> isBuffering =
-                                                    true
-
-                                                MediaPlayer.MEDIA_INFO_BUFFERING_END -> isBuffering =
-                                                    false
-
-                                                MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START -> isBuffering =
-                                                    false
-                                            }
+                                        setOnInfoListener { _, _, _ ->
                                             true
                                         }
                                         setOnErrorListener { _, _, extra ->
                                             error = "Error: $extra"
-                                            isBuffering = false
                                             true
                                         }
                                         try {
                                             setDataSource(videoTarget.videoUrl)
                                             setOnPreparedListener {
                                                 isReady = true
-                                                isBuffering = false
                                                 start()
                                             }
                                             prepareAsync()
                                         } catch (e: Exception) {
                                             Timber.tag(TAG).e(e, "Player failed")
                                             error = e.localizedMessage
-                                            isBuffering = false
                                         }
                                     }
                                 }
@@ -248,7 +251,7 @@ fun ARVideoDemo(
                             DisposableEffect(player) { onDispose { player?.release() } }
 
                             LaunchedEffect(isPlaying, isReady, activeImageIndex) {
-                                if (isReady) {
+                                if (isReady && !isYouTube) {
                                     if (isPlaying && activeImageIndex == image.index) {
                                         player?.start()
                                     } else {
@@ -257,7 +260,7 @@ fun ARVideoDemo(
                                 }
                             }
                             LaunchedEffect(isMuted, isReady) {
-                                if (isReady) {
+                                if (isReady && !isYouTube) {
                                     val v = if (isMuted) 0f else 1f; player?.setVolume(v, v)
                                 }
                             }
@@ -274,10 +277,13 @@ fun ARVideoDemo(
                             val imageWidth = image.extentX
                             val imageHeight = image.extentZ
 
-                            val videoAspect =
-                                if (player != null && player.videoWidth > 0 && player.videoHeight > 0)
+                            val videoAspect = when {
+                                isYouTube -> 16f / 9f
+                                player != null && player.videoWidth > 0 && player.videoHeight > 0 ->
                                     player.videoWidth.toFloat() / player.videoHeight.toFloat()
-                                else 16f / 9f
+
+                                else -> 16f / 9f
+                            }
 
                             val finalWidth: Float
                             val finalHeight: Float
@@ -295,8 +301,24 @@ fun ARVideoDemo(
                                 applyImageScale = false
                             ) {
                                 if (isTrackingStable && activeImageIndex == image.index && error == null) {
-                                    key(useChromaKey) {
-                                        if (player != null && isReady) {
+                                    key(useChromaKey, isYouTube) {
+                                        if (isYouTube) {
+                                            YouTubeNode(
+                                                videoUrl = videoTarget.videoUrl,
+                                                windowManager = viewNodeManager,
+                                                autoPlay = isPlaying,
+                                                mute = isMuted,
+                                                size = Size(finalWidth, finalHeight),
+                                                position = Float3(0f, 0.01f, 0f),
+                                                rotation = Float3(-90f, 0f, 0f),
+                                                scale = Float3(1f, 1f, 1f),
+                                                apply = {
+                                                    onReady = {
+                                                        isReady = true
+                                                    }
+                                                }
+                                            )
+                                        } else if (player != null && isReady) {
                                             VideoNode(
                                                 player = player,
                                                 chromaKeyColor = if (useChromaKey) 0xFF00FF00.toInt() else null,
@@ -318,7 +340,7 @@ fun ARVideoDemo(
                                         scale = Float3(1f, 1f, 1f)
                                     ) {
                                         Box(
-                                            modifier = Modifier.size(10.dp),
+                                            modifier = Modifier.size(40.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             if (error != null) {
@@ -326,13 +348,12 @@ fun ARVideoDemo(
                                                     imageVector = Icons.Default.Error,
                                                     contentDescription = null,
                                                     tint = MaterialTheme.colorScheme.error,
-                                                    modifier = Modifier.size(6.dp)
+                                                    modifier = Modifier.size(12.dp)
                                                 )
                                             } else {
                                                 CircularProgressIndicator(
-                                                    modifier = Modifier.size(6.dp),
-                                                    strokeWidth = 1.dp,
-                                                    color = colorResource(R.color.status_beta)
+                                                    modifier = Modifier.size(12.dp),
+                                                    strokeWidth = 2.dp
                                                 )
                                             }
                                         }

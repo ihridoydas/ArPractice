@@ -53,6 +53,7 @@ material3Android = "1.4.0"
 foundationAndroid = "1.11.0"
 composeMaterialIcons = "1.7.8"
 sceneview = "4.0.9"
+youtube-player = "13.0.0"
 
 [libraries]
 androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "coreSplashscreen" }
@@ -125,6 +126,7 @@ versioning-plugin = { module = "org.jetbrains.dokka:versioning-plugin", version.
 androidx-material3-android = { group = "androidx.compose.material3", name = "material3-android", version.ref = "material3Android" }
 androidx-foundation-android = { group = "androidx.compose.foundation", name = "foundation-android", version.ref = "foundationAndroid" }
 sceneview-arsceneview = { group = "io.github.sceneview", name = "arsceneview", version.ref = "sceneview" }
+youtube-player-core = { group = "com.pierfrancescosoffritti.androidyoutubeplayer", name = "core", version.ref = "youtube-player" }
 
 [plugins]
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlinAndroid" }
