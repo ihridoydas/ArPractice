@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.MediaPlayer
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -44,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.ar.core.AugmentedImage
@@ -410,6 +413,37 @@ fun ARVideoDemo(
                                     }
                                 }
 
+                                // 🔹 Pause Icon Overlay: Show when the video is paused
+                                if (!isNodePlaying && isReady && isCurrentlyTracking) {
+                                    ViewNode(
+                                        windowManager = viewNodeManager,
+                                        unlit = true,
+                                        // Position it at the top-right corner of the video
+                                        position = Float3(finalWidth / 2f - 0.012f, 0.015f, -finalHeight / 2f + 0.012f),
+                                        rotation = Float3(-90f, 0f, 0f),
+                                        scale = Float3(1f, 1f, 1f),
+                                        apply = {
+                                            isTouchable = false
+                                            // Constrain the view size to avoid it expanding and covering the screen
+                                            pxPerUnits = 2500f
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Pause,
+                                                contentDescription = "Paused",
+                                                tint = Color.Blue,
+                                                modifier = Modifier.size(15.dp)
+                                                    .background(color = Color.White)
+                                            )
+                                        }
+                                    }
+                                }
+
                                 if (showLoading && !isReady) {
                                     ViewNode(
                                         windowManager = viewNodeManager,
@@ -419,6 +453,7 @@ fun ARVideoDemo(
                                         scale = Float3(1f, 1f, 1f),
                                         apply = {
                                             isTouchable = false // Loading indicator is not touchable
+                                            pxPerUnits = 2000f
                                         }
                                     ) {
                                         Box(
@@ -430,11 +465,11 @@ fun ARVideoDemo(
                                                     imageVector = Icons.Default.Error,
                                                     contentDescription = null,
                                                     tint = MaterialTheme.colorScheme.error,
-                                                    modifier = Modifier.size(10.dp)
+                                                    modifier = Modifier.size(30.dp)
                                                 )
                                             } else {
                                                 CircularProgressIndicator(
-                                                    modifier = Modifier.size(10.dp),
+                                                    modifier = Modifier.size(30.dp),
                                                     strokeWidth = 1.5.dp
                                                 )
                                             }
