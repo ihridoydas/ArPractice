@@ -165,6 +165,7 @@ dependencies {
     implementation(libs.square.retrofit.converter.moshi)
     implementation(libs.timber)
     implementation(libs.sceneview.arsceneview)
+    implementation(libs.youtube.player.core)
     //Module
     implementation(projects.common)
     implementation(projects.navigation)

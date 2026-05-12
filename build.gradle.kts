@@ -78,7 +78,7 @@ afterEvaluate {
 }
 
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
-    jvmTarget = "17"
+    jvmTarget = "21"
     config.setFrom(project.layout.projectDirectory.file("config/detekt/detekt.yml"))
 }
 
@@ -110,8 +110,8 @@ subprojects {
                         }
                     }
                     compileOptions {
-                        sourceCompatibility = JavaVersion.VERSION_17
-                        targetCompatibility = JavaVersion.VERSION_17
+                        sourceCompatibility = JavaVersion.VERSION_21
+                        targetCompatibility = JavaVersion.VERSION_21
                     }
 
                     packaging {
@@ -140,8 +140,8 @@ subprojects {
                         }
                     }
                     compileOptions {
-                        sourceCompatibility = JavaVersion.VERSION_17
-                        targetCompatibility = JavaVersion.VERSION_17
+                        sourceCompatibility = JavaVersion.VERSION_21
+                        targetCompatibility = JavaVersion.VERSION_21
                     }
 
                     packaging {
@@ -158,8 +158,8 @@ subprojects {
 
             is JavaPlugin -> {
                 extensions.configure<JavaPluginExtension> {
-                    sourceCompatibility = JavaVersion.VERSION_17
-                    targetCompatibility = JavaVersion.VERSION_17
+                    sourceCompatibility = JavaVersion.VERSION_21
+                    targetCompatibility = JavaVersion.VERSION_21
                 }
             }
         }
@@ -171,7 +171,7 @@ subprojects {
 
     tasks.withType<KotlinCompile>().configureEach {
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_17)
+            jvmTarget.set(JvmTarget.JVM_21)
             freeCompilerArgs.addAll(
                 listOf("-opt-in=androidx.compose.material3.ExperimentalMaterial3Api")
             )
