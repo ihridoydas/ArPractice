@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.MediaPlayer
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -38,11 +40,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.ar.core.AugmentedImage
@@ -51,6 +55,7 @@ import com.google.ar.core.Config
 import com.google.ar.core.Frame
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
+import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.YouTubePlayer
 import dev.romainguy.kotlin.math.Float3
 import io.github.sceneview.ExperimentalSceneViewApi
 import io.github.sceneview.ar.ARSceneView
@@ -91,6 +96,8 @@ fun ARVideoDemo(
     var useChromaKey by remember { mutableStateOf(false) }
 
     val detectedImages = remember { mutableStateListOf<AugmentedImage>() }
+    val trackingStates = remember { mutableStateMapOf<Int, TrackingState>() }
+    val trackingMethods = remember { mutableStateMapOf<Int, AugmentedImage.TrackingMethod>() }
     var activeImageIndex by remember { mutableIntStateOf(-1) }
 
     val activeEnvironment = rememberHDREnvironment(
@@ -140,25 +147,35 @@ fun ARVideoDemo(
     }
 
     val onSessionUpdated = remember {
-        { _: Session, frame: Frame ->
-            val updatedImages = frame.getUpdatedTrackables(AugmentedImage::class.java)
-            updatedImages.forEach { image ->
-                if (image.trackingState == TrackingState.TRACKING && image.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING) {
-                    if (detectedImages.none { it.index == image.index }) {
-                        Timber.tag(TAG).d("Image detected: %s at index %d", image.name, image.index)
-                        detectedImages.add(image)
-                        if (activeImageIndex == -1) activeImageIndex = image.index
-                    }
+        { session: Session, _: Frame ->
+            val allImages = session.getAllTrackables(AugmentedImage::class.java)
+
+            // Update tracking states for all images
+            allImages.forEach { image ->
+                trackingStates[image.index] = image.trackingState
+                trackingMethods[image.index] = image.trackingMethod
+            }
+
+            // Find images that are actually being tracked (FULL_TRACKING)
+            val trackingImages = allImages.filter {
+                it.trackingState == TrackingState.TRACKING &&
+                        it.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
+            }
+
+            trackingImages.forEach { image ->
+                if (detectedImages.none { it.index == image.index }) {
+                    Timber.tag(TAG).d("New image detected: %s", image.name)
+                    detectedImages.add(image)
                 }
             }
 
-            // Select the image closest to the camera center as active, with a bit of hysteresis
-            val centerImage = updatedImages
-                .firstOrNull { it.trackingState == TrackingState.TRACKING && it.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING }
-
-            if (centerImage != null && activeImageIndex != centerImage.index) {
-                Timber.tag(TAG).d("Active image changed to: %d", centerImage.index)
-                activeImageIndex = centerImage.index
+            // Update the active image index to the one currently being tracked.
+            // If multiple are tracked, we pick the first one to avoid "overtaking".
+            val currentTrackedImage = trackingImages.firstOrNull()
+            if (currentTrackedImage != null) {
+                if (activeImageIndex != currentTrackedImage.index) {
+                    activeImageIndex = currentTrackedImage.index
+                }
             }
         }
     }
@@ -204,20 +221,37 @@ fun ARVideoDemo(
                             }
                             var isReady by remember(image.index) { mutableStateOf(false) }
                             var error by remember(image.index) { mutableStateOf<String?>(null) }
-                            var isTrackingStable by remember(image.index) { mutableStateOf(false) }
                             var showLoading by remember(image.index) { mutableStateOf(false) }
+                            var retryCount by remember(image.index) { mutableIntStateOf(0) }
 
-                            LaunchedEffect(image.index) {
-                                // Phase 1: Wait for ARCore to settle (0-500ms)
-                                delay(500)
-                                showLoading = true
-                                // Phase 2: Short wait for stability
-                                delay(1000)
-                                isTrackingStable = true
+                            var isNodePlaying by remember(image.index) { mutableStateOf(isPlaying) }
+                            var isTimedOut by remember(image.index) { mutableStateOf(false) }
+                            var isUserPaused by remember(image.index) { mutableStateOf(false) }
+                            var youTubePlayerInstance by remember(image.index) { mutableStateOf<YouTubePlayer?>(null) }
+
+                            val currentTrackingState = trackingStates[image.index] ?: TrackingState.STOPPED
+                            val currentTrackingMethod = trackingMethods[image.index] ?: AugmentedImage.TrackingMethod.NOT_TRACKING
+                            
+                            // "In Focus" means it's actively tracked by the camera and is the primary image
+                            val isInFocus = currentTrackingState == TrackingState.TRACKING && 
+                                           currentTrackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING &&
+                                           image.index == activeImageIndex
+
+                            LaunchedEffect(isInFocus, isPlaying, isUserPaused, isTimedOut) {
+                                val shouldPlay = isPlaying && 
+                                               isInFocus && 
+                                               !isUserPaused && 
+                                               !isTimedOut
+                                
+                                isNodePlaying = shouldPlay
                             }
 
-                            val player = if (!isYouTube && isTrackingStable) {
-                                remember(image.index) {
+                            LaunchedEffect(image.index) {
+                                showLoading = true
+                            }
+
+                            val player = if (!isYouTube) {
+                                remember(image.index, retryCount) {
                                     MediaPlayer().apply {
                                         setAudioAttributes(
                                             AudioAttributes.Builder()
@@ -238,21 +272,44 @@ fun ARVideoDemo(
                                             setDataSource(videoTarget.videoUrl)
                                             setOnPreparedListener {
                                                 isReady = true
+                                                error = null
                                                 start()
                                             }
                                             prepareAsync()
                                         } catch (e: Exception) {
                                             Timber.tag(TAG).e(e, "Player failed")
-                                            error = e.localizedMessage
+                                            error = "Fetch Failed: ${e.localizedMessage}"
                                         }
                                     }
                                 }
                             } else null
                             DisposableEffect(player) { onDispose { player?.release() } }
 
-                            LaunchedEffect(isPlaying, isReady, activeImageIndex) {
+                            // Timeout & Stop Logic: If not in focus for 15 seconds, reset the video
+                            LaunchedEffect(isInFocus) {
+                                if (!isInFocus) {
+                                    Timber.tag(TAG).d("Image %d lost focus, waiting for 15s timeout", image.index)
+                                    delay(15000)
+                                    if (!isInFocus) {
+                                        Timber.tag(TAG).d("Image %d timeout reached, resetting video", image.index)
+                                        isTimedOut = true
+                                        // Stop and seek back to 0
+                                        if (isYouTube) {
+                                            youTubePlayerInstance?.pause()
+                                            youTubePlayerInstance?.seekTo(0f)
+                                        } else {
+                                            player?.pause()
+                                            player?.seekTo(0)
+                                        }
+                                    }
+                                } else {
+                                    isTimedOut = false
+                                }
+                            }
+
+                            LaunchedEffect(isNodePlaying, isReady) {
                                 if (isReady && !isYouTube) {
-                                    if (isPlaying && activeImageIndex == image.index) {
+                                    if (isNodePlaying) {
                                         player?.start()
                                     } else {
                                         player?.pause()
@@ -266,16 +323,13 @@ fun ARVideoDemo(
                             }
 
                             val videoScale = remember(image.index) { Animatable(0f) }
-                            LaunchedEffect(isReady, image.trackingState, activeImageIndex) {
-                                if (isReady && image.trackingState == TrackingState.TRACKING && activeImageIndex == image.index) {
+                            LaunchedEffect(isReady, image.trackingState) {
+                                if (isReady && image.trackingState != TrackingState.STOPPED) {
                                     videoScale.animateTo(1f, tween(500))
                                 } else {
                                     videoScale.animateTo(0f, tween(300))
                                 }
                             }
-
-                            val imageWidth = image.extentX
-                            val imageHeight = image.extentZ
 
                             val videoAspect = when {
                                 isYouTube -> 16f / 9f
@@ -284,6 +338,9 @@ fun ARVideoDemo(
 
                                 else -> 16f / 9f
                             }
+
+                            val imageWidth = image.extentX.takeIf { it > 0 } ?: videoTarget.widthInMeters
+                            val imageHeight = image.extentZ.takeIf { it > 0 } ?: (imageWidth / videoAspect)
 
                             val finalWidth: Float
                             val finalHeight: Float
@@ -298,61 +355,138 @@ fun ARVideoDemo(
 
                             AugmentedImageNode(
                                 augmentedImage = image,
-                                applyImageScale = false
+                                applyImageScale = false,
+                                apply = {
+                                    isVisible = isInFocus // Only show the node if it's in focus
+                                    isTouchable = false
+                                    onSingleTapUp = { false }
+                                }
                             ) {
-                                if (isTrackingStable && activeImageIndex == image.index && error == null) {
+                                if (error == null) {
                                     key(useChromaKey, isYouTube) {
                                         if (isYouTube) {
                                             YouTubeNode(
                                                 videoUrl = videoTarget.videoUrl,
                                                 windowManager = viewNodeManager,
-                                                autoPlay = isPlaying,
+                                                autoPlay = isNodePlaying,
                                                 mute = isMuted,
                                                 size = Size(finalWidth, finalHeight),
                                                 position = Float3(0f, 0.01f, 0f),
                                                 rotation = Float3(-90f, 0f, 0f),
                                                 scale = Float3(1f, 1f, 1f),
                                                 apply = {
-                                                    onReady = {
+                                                    onReady = { player ->
+                                                        youTubePlayerInstance = player
                                                         isReady = true
+                                                    }
+                                                    onSingleTapUp = { _ ->
+                                                        // Tapping the video toggles manual pause
+                                                        isUserPaused = !isUserPaused
+                                                        true
+                                                    }
+                                                    onLongPress = { _ ->
+                                                        isUserPaused = true
+                                                        youTubePlayerInstance?.pause()
+                                                        youTubePlayerInstance?.seekTo(0f)
                                                     }
                                                 }
                                             )
-                                        } else if (player != null && isReady) {
+                                        } else if (player != null) {
                                             VideoNode(
                                                 player = player,
                                                 chromaKeyColor = if (useChromaKey) 0xFF00FF00.toInt() else null,
                                                 size = Size(finalWidth, finalHeight),
                                                 position = Float3(0f, 0.01f, 0f),
                                                 rotation = Float3(-90f, 0f, 0f),
-                                                scale = Float3(1f, 1f, 1f)
+                                                scale = Float3(1f, 1f, 1f),
+                                                apply = {
+                                                    onSingleTapUp = { _ ->
+                                                        // Tapping the video toggles manual pause
+                                                        isUserPaused = !isUserPaused
+                                                        true
+                                                    }
+                                                    onLongPress = { _ ->
+                                                        isUserPaused = true
+                                                        player.pause()
+                                                        player.seekTo(0)
+                                                    }
+                                                }
                                             )
                                         }
                                     }
                                 }
 
-                                if (activeImageIndex == image.index && showLoading && (!isTrackingStable || !isReady)) {
+                                // 🔹 Pause Icon Overlay: Show when the video is paused
+                                if (!isNodePlaying && isReady && isInFocus) {
+                                    ViewNode(
+                                        windowManager = viewNodeManager,
+                                        unlit = true,
+                                        // Position it at the top-right corner of the video
+                                        position = Float3(finalWidth / 2f - 0.012f, 0.015f, -finalHeight / 2f + 0.012f),
+                                        rotation = Float3(-90f, 0f, 0f),
+                                        scale = Float3(1f, 1f, 1f),
+                                        apply = {
+                                            isTouchable = false
+                                            // Constrain the view size to avoid it expanding and covering the screen
+                                            pxPerUnits = 2500f
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Pause,
+                                                contentDescription = "Paused",
+                                                tint = Color.Blue,
+                                                modifier = Modifier.size(15.dp)
+                                                    .background(color = Color.White)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (showLoading && !isReady) {
                                     ViewNode(
                                         windowManager = viewNodeManager,
                                         unlit = true,
                                         position = Float3(0f, 0.01f, 0f),
                                         rotation = Float3(-90f, 0f, 0f),
-                                        scale = Float3(1f, 1f, 1f)
+                                        scale = Float3(1f, 1f, 1f),
+                                        apply = {
+                                            isTouchable = true
+                                            onSingleTapUp = {
+                                                if (error != null) {
+                                                    error = null
+                                                    retryCount++
+                                                    true
+                                                } else false
+                                            }
+                                            pxPerUnits = 2000f
+                                        }
                                     ) {
                                         Box(
                                             modifier = Modifier.size(40.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             if (error != null) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Error,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.error,
-                                                    modifier = Modifier.size(12.dp)
-                                                )
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Error,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.error,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                    Text(
+                                                        "Tap to retry",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.error
+                                                    )
+                                                }
                                             } else {
                                                 CircularProgressIndicator(
-                                                    modifier = Modifier.size(12.dp),
+                                                    modifier = Modifier.size(24.dp),
                                                     strokeWidth = 2.dp
                                                 )
                                             }
