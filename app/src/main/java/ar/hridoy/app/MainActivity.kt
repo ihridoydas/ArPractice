@@ -36,7 +36,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -45,12 +44,10 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
-import dagger.hilt.android.AndroidEntryPoint
 import ar.hridoy.app.common.DURATION
 import ar.hridoy.app.common.VALUES_X
 import ar.hridoy.app.common.VALUES_Y
 import ar.hridoy.app.common.utils.RootUtil
-import ar.hridoy.app.datastore.Language
 import ar.hridoy.app.datastore.ThemePreferences
 import ar.hridoy.app.local.language.LanguageDataStore
 import ar.hridoy.app.local.theme.ThemeLocalDataStore
@@ -58,6 +55,9 @@ import ar.hridoy.app.theme.ArPracticeTheme
 import ar.hridoy.app.theme.splashScreen.SplashViewModel
 import ar.hridoy.app.ui.MainAnimationNavHost
 import ar.hridoy.app.util.Utils
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 @AndroidEntryPoint
@@ -73,18 +73,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize DataStores immediately to prevent UninitializedPropertyAccessException
+        // Initialize DataStores immediately
         languageDataStore = LanguageDataStore(this)
         themeDataStore = ThemeLocalDataStore(this)
 
         configureEdgeToEdgeWindow()
-
-        // Check Rooted Device
-        if (RootUtil.isDeviceRooted()) {
-            Timber.tag(Tag).e("onCreate - Rooted device.")
-            finish()
-            return
-        }
 
         Timber.tag(Tag).d("onCreate")
 
@@ -125,6 +118,17 @@ class MainActivity : AppCompatActivity() {
             val themeMode by themeDataStore.themeMode
                 .collectAsState(initial = ThemePreferences.ThemeMode.SYSTEM)
 
+            // Asynchronous Root Check to prevent ANR
+            LaunchedEffect(Unit) {
+                val isRooted = withContext(Dispatchers.IO) {
+                    RootUtil.isDeviceRooted()
+                }
+                if (isRooted) {
+                    Timber.tag(Tag).e("onCreate - Rooted device detected.")
+                    finish()
+                }
+            }
+
             languageState.value?.let { language ->
                 LaunchedEffect(language) {
                     Utils.applyLanguage(this@MainActivity, language)
@@ -148,17 +152,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Configures our [MainActivity] window so that it reaches edge to edge of the device, meaning
-     * content can be rendered underneath the status and navigation bars.
-     *
-     * This method works hand in hand with [ConfigureTransparentSystemBars], to make sure content
-     * behind these bars is visible.
-     *
-     * Keep in mind that if you need to make sure your content padding doesn't clash with the status bar text/icons,
-     * you can leverage modifiers like `windowInsetsPadding()` and `systemBarsPadding()`. For more information,
-     * read the Compose WindowInsets docs: https://developer.android.com/reference/kotlin/androidx/compose/foundation/layout/WindowInsets
-     */
     private fun configureEdgeToEdgeWindow() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
     }
@@ -190,9 +183,4 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-}
-
-@Composable
-fun Greeting(name: String) {
-    Text(text = "Hello $name!")
 }

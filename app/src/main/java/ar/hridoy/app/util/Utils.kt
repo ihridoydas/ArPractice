@@ -29,15 +29,17 @@ import android.telephony.TelephonyManager
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import ar.hridoy.app.datastore.Language
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 object Utils {
-    fun applyLanguage(
+    suspend fun applyLanguage(
         context: Context,
         language: Language,
     ) {
-        val targetCode = when (language) {
-            Language.SYSTEM -> {
+        val targetCode = if (language == Language.SYSTEM) {
+            withContext(Dispatchers.IO) {
                 val telephonyManager =
                     context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
 
@@ -52,32 +54,36 @@ object Utils {
                     else -> Locale.getDefault().language
                 }
             }
-            Language.ENGLISH -> "en"
-            Language.JAPANESE -> "ja"
-            Language.BENGALI -> "bn"
-            else -> "en"
+        } else {
+            when (language) {
+                Language.ENGLISH -> "en"
+                Language.JAPANESE -> "ja"
+                Language.BENGALI -> "bn"
+                else -> "en"
+            }
         }
 
-        val currentLocales = AppCompatDelegate.getApplicationLocales()
-        val currentCode = if (!currentLocales.isEmpty) currentLocales.get(0)?.language else null
+        withContext(Dispatchers.Main) {
+            val currentLocales = AppCompatDelegate.getApplicationLocales()
+            val currentCode = if (!currentLocales.isEmpty) currentLocales.get(0)?.language else null
 
-        // Log to debug
-        // android.util.Log.d("LanguageSync", "Current: $currentCode, Target: $targetCode")
-
-        if (currentCode != targetCode) {
-            AppCompatDelegate.setApplicationLocales(
-                LocaleListCompat.forLanguageTags(targetCode),
-            )
+            if (currentCode != targetCode) {
+                AppCompatDelegate.setApplicationLocales(
+                    LocaleListCompat.forLanguageTags(targetCode),
+                )
+            }
         }
     }
 
-    fun changeLanguage(code: String) {
-        val currentLocales = AppCompatDelegate.getApplicationLocales()
-        val currentCode = if (!currentLocales.isEmpty) currentLocales.get(0)?.language else null
+    suspend fun changeLanguage(code: String) {
+        withContext(Dispatchers.Main) {
+            val currentLocales = AppCompatDelegate.getApplicationLocales()
+            val currentCode = if (!currentLocales.isEmpty) currentLocales.get(0)?.language else null
 
-        if (currentCode != code) {
-            val appLocale = LocaleListCompat.forLanguageTags(code)
-            AppCompatDelegate.setApplicationLocales(appLocale)
+            if (currentCode != code) {
+                val appLocale = LocaleListCompat.forLanguageTags(code)
+                AppCompatDelegate.setApplicationLocales(appLocale)
+            }
         }
     }
 }
