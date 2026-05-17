@@ -201,6 +201,8 @@ dependencies {
     implementation(libs.youtube.player.core)
     implementation(libs.coil.compose)
     implementation(libs.androidx.exifinterface)
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-common:1.5.1")
     //Module
     implementation(projects.common)
     implementation(projects.navigation)

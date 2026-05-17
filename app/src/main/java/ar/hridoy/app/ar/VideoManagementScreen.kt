@@ -30,6 +30,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import ar.hridoy.app.common.model.AugmentedVideo
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -181,6 +185,7 @@ fun VideoDialog(
     onConfirm: (AugmentedVideo) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf(video?.name ?: "") }
     var imagePath by remember { mutableStateOf(video?.imageAssetPath ?: "") }
     var videoUrl by remember { mutableStateOf(video?.videoUrl ?: "") }
@@ -224,21 +229,24 @@ fun VideoDialog(
         contract = ActivityResultContracts.GetContent(),
         onResult = { uri: Uri? ->
             uri?.let {
-                // Copy the video to local storage to have a persistent path
-                val storageDir = context.getExternalFilesDir("Videos")
-                if (storageDir?.exists() == false) storageDir.mkdirs()
-                val fileName = "VIDEO_${System.currentTimeMillis()}.mp4"
-                val file = File(storageDir, fileName)
-                
-                try {
-                    context.contentResolver.openInputStream(it)?.use { input ->
-                        FileOutputStream(file).use { output ->
-                            input.copyTo(output)
+                scope.launch(Dispatchers.IO) {
+                    val storageDir = context.getExternalFilesDir("Videos")
+                    if (storageDir?.exists() == false) storageDir.mkdirs()
+                    val fileName = "VIDEO_${System.currentTimeMillis()}.mp4"
+                    val file = File(storageDir, fileName)
+                    
+                    try {
+                        context.contentResolver.openInputStream(it)?.use { input ->
+                            FileOutputStream(file).use { output ->
+                                input.copyTo(output)
+                            }
                         }
+                        withContext(Dispatchers.Main) {
+                            videoUrl = file.absolutePath
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to copy video")
                     }
-                    videoUrl = file.absolutePath
-                } catch (e: Exception) {
-                    // Handle error
                 }
             }
         }

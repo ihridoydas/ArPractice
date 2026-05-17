@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
@@ -34,6 +35,9 @@ import io.github.sceneview.node.VideoNode
 import io.github.sceneview.rememberViewNodeManager
 import kotlinx.coroutines.delay
 import timber.log.Timber
+import java.io.File
+
+private const val TAG = "ARVideoDemo"
 
 @Composable
 fun ARVideoDemo(
@@ -184,6 +188,7 @@ fun ARVideoContent(
                                         videoTarget.videoUrl.contains("youtube.com") || videoTarget.videoUrl.contains("youtu.be")
                                     }
                                     var isReady by remember { mutableStateOf(false) }
+                                    var playerError by remember { mutableStateOf<String?>(null) }
                                     var isUserPaused by remember { mutableStateOf(false) }
                                     var youTubePlayerInstance by remember { mutableStateOf<YouTubePlayer?>(null) }
 
@@ -201,14 +206,42 @@ fun ARVideoContent(
                                     val player = if (!isYouTube) {
                                         remember {
                                             MediaPlayer().apply {
-                                                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build())
+                                                setAudioAttributes(
+                                                    AudioAttributes.Builder()
+                                                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                                                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                                                        .build()
+                                                )
                                                 isLooping = true
                                                 setVolume(0f, 0f)
                                                 try {
-                                                    setDataSource(videoTarget.videoUrl)
-                                                    setOnPreparedListener { isReady = true; if (isPlaying && isInFocus && !isUserPaused) start() }
+                                                    // Optimization: Use direct file descriptor for local files
+                                                    if (videoTarget.videoUrl.startsWith("/")) {
+                                                        val file = File(videoTarget.videoUrl)
+                                                        val fis = java.io.FileInputStream(file)
+                                                        setDataSource(fis.fd)
+                                                        fis.close()
+                                                    } else {
+                                                        setDataSource(videoTarget.videoUrl)
+                                                    }
+                                                    
+                                                    setOnPreparedListener { 
+                                                        Timber.tag(TAG).d("Video prepared: %s", videoTarget.name)
+                                                        isReady = true
+                                                        if (isPlaying && isInFocus && !isUserPaused) start() 
+                                                    }
+                                                    setOnErrorListener { _, what, extra ->
+                                                        val msg = "MediaPlayer error: $what, $extra"
+                                                        Timber.tag(TAG).e("[%s] %s", videoTarget.name, msg)
+                                                        playerError = msg
+                                                        true
+                                                    }
                                                     prepareAsync()
-                                                } catch (e: Exception) { Timber.e(e) }
+                                                } catch (e: Exception) { 
+                                                    val msg = e.localizedMessage ?: "Unknown error"
+                                                    Timber.tag(TAG).e(e, "MediaPlayer setup failed: %s", videoTarget.name)
+                                                    playerError = msg
+                                                }
                                             }
                                         }
                                     } else null
@@ -290,10 +323,14 @@ fun ARVideoContent(
                                                     modifier = Modifier.size(40.dp),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    CircularProgressIndicator(
-                                                        modifier = Modifier.size(24.dp),
-                                                        strokeWidth = 2.dp
-                                                    )
+                                                    if (playerError != null) {
+                                                        Icon(Icons.Default.Error, null, tint = Color.Red)
+                                                    } else {
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier.size(24.dp),
+                                                            strokeWidth = 2.dp
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
