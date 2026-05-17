@@ -105,6 +105,7 @@ fun ARVideoDemo(
     var activeImageIndex by remember { mutableIntStateOf(-1) }
 
     val augmentedVideoTargets = remember { mutableStateListOf<AugmentedVideo>() }
+    val bitmaps = remember { mutableStateMapOf<String, android.graphics.Bitmap>() }
     var isLoadingData by remember { mutableStateOf(true) }
     var fetchError by remember { mutableStateOf<String?>(null) }
 
@@ -153,6 +154,36 @@ fun ARVideoDemo(
                     if (augmentedVideoTargets.isEmpty()) {
                         Timber.tag(TAG).w("No active videos found in sheet matching 'true' in column E")
                         fetchError = "No active videos found in sheet. Make sure Column E has 'true'."
+                    } else {
+                        // Download/Load Bitmaps
+                        augmentedVideoTargets.forEach { target ->
+                            try {
+                                val bitmap = withContext(Dispatchers.IO) {
+                                    if (target.imageAssetPath.startsWith("http")) {
+                                        val connection = java.net.URL(target.imageAssetPath).openConnection()
+                                        connection.connect()
+                                        connection.getInputStream().use { inputStream ->
+                                            BitmapFactory.decodeStream(inputStream)
+                                        }
+                                    } else {
+                                        context.assets.open(target.imageAssetPath).use { inputStream ->
+                                            BitmapFactory.decodeStream(inputStream)
+                                        }
+                                    }
+                                }
+                                if (bitmap != null) {
+                                    bitmaps[target.name] = bitmap
+                                } else {
+                                    Timber.tag(TAG).e("Decoded bitmap is null for ${target.name}")
+                                }
+                            } catch (e: Exception) {
+                                Timber.tag(TAG).e(e, "Failed to load image for ${target.name}")
+                            }
+                        }
+
+                        if (bitmaps.isEmpty()) {
+                            fetchError = "Failed to load any trigger images"
+                        }
                     }
                 }
             }
@@ -186,18 +217,7 @@ fun ARVideoDemo(
         return@ARVideoDemo
     }
 
-    val bitmaps = remember(context, augmentedVideoTargets.size) {
-        augmentedVideoTargets.associate { target ->
-            target.name to try {
-                context.assets.open(target.imageAssetPath)
-                    .use { inputStream -> BitmapFactory.decodeStream(inputStream) }
-            } catch (_: Exception) {
-                null
-            }
-        }.filterValues { it != null }.mapValues { it.value!! }
-    }
-
-    val onSessionConfiguration = remember(bitmaps) {
+    val onSessionConfiguration = remember(bitmaps.size) {
         { session: Session, config: Config ->
             config.planeFindingMode = Config.PlaneFindingMode.DISABLED
             config.augmentedImageDatabase = AugmentedImageDatabase(session).apply {
