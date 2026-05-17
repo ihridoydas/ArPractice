@@ -43,6 +43,7 @@ import ar.hridoy.app.navigation.toEntries
 import ar.hridoy.app.screens.HomeScreen
 import ar.hridoy.app.screens.ViewScreen
 import ar.hridoy.app.ar.ARVideoDemo
+import ar.hridoy.app.ar.VideoManagementScreen
 
 @Composable
 fun MainAnimationNavHost(
@@ -75,6 +76,13 @@ fun MainAnimationNavHost(
                 onBack = {
                     navigator.goBack()
                 },
+            )
+        }
+        screen<ScreenDestinations.VideoManagement> {
+            VideoManagementScreen(
+                onBack = {
+                    navigator.goBack()
+                }
             )
         }
     }
