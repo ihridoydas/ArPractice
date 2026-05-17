@@ -1,5 +1,13 @@
 package ar.hridoy.app.ar
 
+import ar.hridoy.app.common.model.AugmentedVideo
+import ar.hridoy.app.network.GoogleSheetsApi
+import ar.hridoy.app.BuildConfig
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
+
 import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.MediaPlayer
@@ -68,16 +76,12 @@ import io.github.sceneview.rememberMaterialLoader
 import io.github.sceneview.rememberModelLoader
 import io.github.sceneview.rememberViewNodeManager
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import timber.log.Timber
 
 private const val TAG = "ARVideoDemo"
-
-data class AugmentedVideo(
-    val name: String,
-    val imageAssetPath: String,
-    val videoUrl: String,
-    val widthInMeters: Float = 0.2f
-)
 
 @OptIn(ExperimentalSceneViewApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -100,35 +104,97 @@ fun ARVideoDemo(
     val trackingMethods = remember { mutableStateMapOf<Int, AugmentedImage.TrackingMethod>() }
     var activeImageIndex by remember { mutableIntStateOf(-1) }
 
+    val augmentedVideoTargets = remember { mutableStateListOf<AugmentedVideo>() }
+    var isLoadingData by remember { mutableStateOf(true) }
+    var fetchError by remember { mutableStateOf<String?>(null) }
+
     val activeEnvironment = rememberHDREnvironment(
         environmentLoader, "environments/studio_warm_2k.hdr", createSkybox = false,
     ) ?: rememberEnvironment(environmentLoader)
 
-    val augmentedVideoTargets = remember {
-        listOf(
-            AugmentedVideo(
-                name = "big_bunny",
-                imageAssetPath = "augmented_images/big_bunny.jpg",
-                videoUrl = "https://www.w3schools.com/html/mov_bbb.mp4"
-            ),
-            AugmentedVideo(
-                name = "sakurahd",
-                imageAssetPath = "augmented_images/sakurahd.jpg",
-                videoUrl = "https://www.pexels.com/download/video/31313620/"
-            ),
-            AugmentedVideo(
-                name = "cute",
-                imageAssetPath = "augmented_images/cute.jpeg",
-                videoUrl = "https://youtu.be/a7M4YuI-2yM"
-            )
-        )
+    LaunchedEffect(Unit) {
+        isLoadingData = true
+        fetchError = null
+        try {
+            withTimeout(10000) { // 10 second timeout
+                Timber.tag(TAG).d("Fetching spreadsheet data from ${BuildConfig.SPREADSHEET_ID}")
+                val moshi = Moshi.Builder()
+                    .add(KotlinJsonAdapterFactory())
+                    .build()
+                val retrofit = Retrofit.Builder()
+                    .baseUrl("https://sheets.googleapis.com/")
+                    .addConverterFactory(MoshiConverterFactory.create(moshi))
+                    .build()
+                val api = retrofit.create(GoogleSheetsApi::class.java)
+                
+                val response = api.getSheetValues(BuildConfig.SPREADSHEET_ID, "Sheet1!A2:E20", BuildConfig.GOOGLE_API_KEY)
+                
+                val values = response.values
+                if (values == null || values.isEmpty()) {
+                    Timber.tag(TAG).w("No values found in spreadsheet")
+                    fetchError = "No data found in spreadsheet. Check if 'Sheet1' exists and has content."
+                } else {
+                    Timber.tag(TAG).d("Found %d rows", values.size)
+                    values.forEachIndexed { index, row ->
+                        Timber.tag(TAG).v("Row %d: %s", index, row.joinToString())
+                        // Ensure row has enough columns and column E (index 4) is "true"
+                        if (row.size >= 5 && row[4].trim().lowercase() == "true") {
+                            augmentedVideoTargets.add(
+                                AugmentedVideo(
+                                    id = row[0].toIntOrNull() ?: 0,
+                                    name = row[1],
+                                    imageAssetPath = row[2],
+                                    videoUrl = row[3],
+                                    active = true
+                                )
+                            )
+                        }
+                    }
+                    if (augmentedVideoTargets.isEmpty()) {
+                        Timber.tag(TAG).w("No active videos found in sheet matching 'true' in column E")
+                        fetchError = "No active videos found in sheet. Make sure Column E has 'true'."
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to fetch spreadsheet data")
+            fetchError = "Error: ${e.localizedMessage ?: "Connection timed out or failed"}. Check Internet and API Key."
+        } finally {
+            isLoadingData = false
+        }
     }
 
-    val bitmaps = remember(context) {
-        augmentedVideoTargets.associate { target ->
-            target.name to context.assets.open(target.imageAssetPath)
-                .use { inputStream -> BitmapFactory.decodeStream(inputStream)!! }
+    if (isLoadingData) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
         }
+        return@ARVideoDemo
+    }
+
+    if (fetchError != null) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                modifier = Modifier.padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(Icons.Default.Error, contentDescription = null, tint = Color.Red, modifier = Modifier.size(48.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(fetchError!!, style = MaterialTheme.typography.bodyLarge, color = Color.Red)
+            }
+        }
+        return@ARVideoDemo
+    }
+
+    val bitmaps = remember(context, augmentedVideoTargets.size) {
+        augmentedVideoTargets.associate { target ->
+            target.name to try {
+                context.assets.open(target.imageAssetPath)
+                    .use { inputStream -> BitmapFactory.decodeStream(inputStream) }
+            } catch (_: Exception) {
+                null
+            }
+        }.filterValues { it != null }.mapValues { it.value!! }
     }
 
     val onSessionConfiguration = remember(bitmaps) {

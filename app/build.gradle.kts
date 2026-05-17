@@ -95,12 +95,40 @@ extensions.configure<ApplicationExtension>("android") {
             versionNameSuffix = "-debug"
             isDebuggable = true
             buildConfigField("String", "Template_HOST", "\"192.168.10.34\"")
+
+            val properties = Properties().apply {
+                val propFile = rootProject.file("local.properties")
+                if (propFile.exists()) {
+                    load(propFile.reader())
+                }
+            }
+            val googleApiKey = properties.getProperty("GOOGLE_API_KEY") ?: ""
+            val spreadsheetId = properties.getProperty("SPREADSHEET_ID") ?: ""
+            val driveFolderId = properties.getProperty("DRIVE_FOLDER_ID") ?: ""
+
+            buildConfigField("String", "GOOGLE_API_KEY", "\"$googleApiKey\"")
+            buildConfigField("String", "SPREADSHEET_ID", "\"$spreadsheetId\"")
+            buildConfigField("String", "DRIVE_FOLDER_ID", "\"$driveFolderId\"")
         }
         getByName("release") {
             isMinifyEnabled = true
             isDebuggable = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "Template_HOST", "\"not given\"")
+
+            val properties = Properties().apply {
+                val propFile = rootProject.file("local.properties")
+                if (propFile.exists()) {
+                    load(propFile.reader())
+                }
+            }
+            val googleApiKey = properties.getProperty("GOOGLE_API_KEY") ?: ""
+            val spreadsheetId = properties.getProperty("SPREADSHEET_ID") ?: ""
+            val driveFolderId = properties.getProperty("DRIVE_FOLDER_ID") ?: ""
+
+            buildConfigField("String", "GOOGLE_API_KEY", "\"$googleApiKey\"")
+            buildConfigField("String", "SPREADSHEET_ID", "\"$spreadsheetId\"")
+            buildConfigField("String", "DRIVE_FOLDER_ID", "\"$driveFolderId\"")
         }
     }
 
