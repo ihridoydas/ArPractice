@@ -6,7 +6,7 @@ plugins {
     id(libs.plugins.ksp.get().pluginId)
     id(libs.plugins.kotlinter.get().pluginId)
     alias(libs.plugins.paparazzi) apply false
-    alias(libs.plugins.hilt) apply false
+    alias(libs.plugins.hilt)
     id(libs.plugins.sortDependencies.get().pluginId)
     id(libs.plugins.dokka.get().pluginId)
     id(libs.plugins.protobuf.get().pluginId)
@@ -95,12 +95,44 @@ extensions.configure<ApplicationExtension>("android") {
             versionNameSuffix = "-debug"
             isDebuggable = true
             buildConfigField("String", "Template_HOST", "\"192.168.10.34\"")
+
+            val properties = Properties().apply {
+                val propFile = rootProject.file("local.properties")
+                if (propFile.exists()) {
+                    load(propFile.reader())
+                }
+            }
+            val googleApiKey = properties.getProperty("GOOGLE_API_KEY") ?: ""
+            val spreadsheetId = properties.getProperty("SPREADSHEET_ID") ?: ""
+            val driveFolderId = properties.getProperty("DRIVE_FOLDER_ID") ?: ""
+            val googleScriptUrl = properties.getProperty("GOOGLE_SCRIPT_URL") ?: ""
+
+            buildConfigField("String", "GOOGLE_API_KEY", "\"$googleApiKey\"")
+            buildConfigField("String", "SPREADSHEET_ID", "\"$spreadsheetId\"")
+            buildConfigField("String", "DRIVE_FOLDER_ID", "\"$driveFolderId\"")
+            buildConfigField("String", "GOOGLE_SCRIPT_URL", "\"$googleScriptUrl\"")
         }
         getByName("release") {
             isMinifyEnabled = true
             isDebuggable = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "Template_HOST", "\"not given\"")
+
+            val properties = Properties().apply {
+                val propFile = rootProject.file("local.properties")
+                if (propFile.exists()) {
+                    load(propFile.reader())
+                }
+            }
+            val googleApiKey = properties.getProperty("GOOGLE_API_KEY") ?: ""
+            val spreadsheetId = properties.getProperty("SPREADSHEET_ID") ?: ""
+            val driveFolderId = properties.getProperty("DRIVE_FOLDER_ID") ?: ""
+            val googleScriptUrl = properties.getProperty("GOOGLE_SCRIPT_URL") ?: ""
+
+            buildConfigField("String", "GOOGLE_API_KEY", "\"$googleApiKey\"")
+            buildConfigField("String", "SPREADSHEET_ID", "\"$spreadsheetId\"")
+            buildConfigField("String", "DRIVE_FOLDER_ID", "\"$driveFolderId\"")
+            buildConfigField("String", "GOOGLE_SCRIPT_URL", "\"$googleScriptUrl\"")
         }
     }
 
@@ -157,6 +189,7 @@ dependencies {
     // Storage
     implementation(libs.datastore)
     implementation(libs.hilt.android)
+    ksp(libs.hilt.android.compiler)
     implementation(libs.ktor.client.core)
     implementation(libs.protobuf.javaLite)
     implementation(libs.protobuf.kotlinLite)
@@ -166,6 +199,7 @@ dependencies {
     implementation(libs.timber)
     implementation(libs.sceneview.arsceneview)
     implementation(libs.youtube.player.core)
+    implementation(libs.coil.compose)
     //Module
     implementation(projects.common)
     implementation(projects.navigation)
@@ -181,7 +215,6 @@ dependencies {
 
     annotationProcessor(libs.androidx.room.compiler)
     // Hilt
-    annotationProcessor(libs.hilt.compiler)
 
     testImplementation(libs.androidx.test.espresso.core)
     testImplementation(libs.androidx.test.junit)

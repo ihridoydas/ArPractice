@@ -152,9 +152,9 @@ open class YouTubeNode(
         }
         useHardwareCanvas = true
 
-        // Delay the HEAVY initialization of YouTubePlayerView until after the AR session has stabilized.
-        // We use a shorter delay (1s) now that ARScene has its own protections.
-        view.postDelayed(initRunnable, 1000)
+        // Delay the initialization of YouTubePlayerView slightly to allow the AR session to stabilize.
+        // Reduced delay for faster response.
+        view.postDelayed(initRunnable, 300)
     }
 
     override fun destroy() {
@@ -246,6 +246,7 @@ fun SceneScope.YouTubeNode(
         scale = scale,
         apply = {
             addChildNode(node)
+            node.apply(apply)
         },
         content = content
     )

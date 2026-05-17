@@ -37,4 +37,7 @@ sealed interface ScreenDestinations : NavKey {
 
     @Serializable
     data object ARVideoDemo : ScreenDestinations
+
+    @Serializable
+    data object VideoManagement : ScreenDestinations
 }
