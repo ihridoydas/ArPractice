@@ -56,13 +56,20 @@ class ARVideoViewModel @Inject constructor(
         val loadedBitmaps = targets.map { target ->
             async {
                 try {
-                    val bitmap = if (target.imageAssetPath.startsWith("http")) {
-                        java.net.URL(target.imageAssetPath).openStream().use { 
-                            BitmapFactory.decodeStream(it) 
+                    val bitmap = when {
+                        target.imageAssetPath.startsWith("http") -> {
+                            java.net.URL(target.imageAssetPath).openStream().use { 
+                                BitmapFactory.decodeStream(it) 
+                            }
                         }
-                    } else {
-                        context.assets.open(target.imageAssetPath).use { 
-                            BitmapFactory.decodeStream(it) 
+                        target.imageAssetPath.startsWith("/") || target.imageAssetPath.startsWith("file://") -> {
+                            val path = target.imageAssetPath.removePrefix("file://")
+                            BitmapFactory.decodeFile(path)
+                        }
+                        else -> {
+                            context.assets.open(target.imageAssetPath).use { 
+                                BitmapFactory.decodeStream(it) 
+                            }
                         }
                     }
                     if (bitmap != null) target.name to bitmap else null
