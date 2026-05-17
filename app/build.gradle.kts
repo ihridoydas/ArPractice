@@ -200,6 +200,7 @@ dependencies {
     implementation(libs.sceneview.arsceneview)
     implementation(libs.youtube.player.core)
     implementation(libs.coil.compose)
+    implementation(libs.androidx.exifinterface)
     //Module
     implementation(projects.common)
     implementation(projects.navigation)
