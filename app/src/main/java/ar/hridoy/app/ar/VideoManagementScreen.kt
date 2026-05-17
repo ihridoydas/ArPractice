@@ -3,6 +3,7 @@ package ar.hridoy.app.ar
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -70,17 +71,25 @@ fun VideoManagementScreen(
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-            if (isLoading && videos.isEmpty()) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(videos) { video ->
-                        VideoItem(
-                            video = video,
-                            onEdit = { editingVideo = it },
-                            onDelete = { viewModel.deleteVideo(it) }
-                        )
-                    }
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(videos) { video ->
+                    VideoItem(
+                        video = video,
+                        onEdit = { editingVideo = it },
+                        onDelete = { viewModel.deleteVideo(it) }
+                    )
+                }
+            }
+
+            if (isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.3f))
+                        .clickable(enabled = false) {},
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
                 }
             }
 

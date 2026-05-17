@@ -14,6 +14,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -34,9 +35,6 @@ class ARVideoViewModel @Inject constructor(
     private val _uiState = MutableStateFlow<ARUiState>(ARUiState.Loading)
     val uiState = _uiState.asStateFlow()
 
-    private val _bitmaps = MutableStateFlow<Map<String, Bitmap>>(emptyMap())
-    val bitmaps = _bitmaps.asStateFlow()
-
     init {
         observeVideos()
     }
@@ -45,34 +43,48 @@ class ARVideoViewModel @Inject constructor(
         viewModelScope.launch {
             repository.videos.collectLatest { targets ->
                 val activeTargets = targets.filter { it.active }
+                
                 if (activeTargets.isNotEmpty()) {
-                    loadBitmaps(activeTargets)
-                    _uiState.value = ARUiState.Success(activeTargets)
+                    // Check if we actually need to reload (avoid reset loops)
+                    val currentState = _uiState.value
+                    if (currentState !is ARUiState.Success || currentState.targets != activeTargets) {
+                        
+                        // If we already have data, don't show full-screen loading to avoid flicker
+                        if (currentState !is ARUiState.Success) {
+                            _uiState.value = ARUiState.Loading
+                        }
+
+                        val loadedBitmaps = loadBitmaps(activeTargets)
+                        _uiState.value = ARUiState.Success(activeTargets, loadedBitmaps)
+                        Timber.tag("AR_DEBUG").d("AR Data Updated: %d targets", activeTargets.size)
+                    }
                 } else {
-                    _uiState.value = ARUiState.Error("No active videos. Add one in Manage Videos.")
+                    // Handle empty state...
+                    val currentData = repository.videos.first()
+                    if (currentData.isEmpty()) {
+                        repository.syncVideos(ar.hridoy.app.BuildConfig.GOOGLE_SCRIPT_URL)
+                    }
+                    if (repository.videos.first().none { it.active }) {
+                        _uiState.value = ARUiState.Error("No active videos found.")
+                    }
                 }
             }
         }
     }
 
-    private suspend fun loadBitmaps(targets: List<AugmentedVideo>) = withContext(Dispatchers.IO) {
-        val loadedBitmaps = targets.map { target ->
+    private suspend fun loadBitmaps(targets: List<AugmentedVideo>): Map<String, Bitmap> = withContext(Dispatchers.IO) {
+        targets.map { target ->
             async {
                 try {
                     val bitmap = when {
                         target.imageAssetPath.startsWith("http") -> {
-                            java.net.URL(target.imageAssetPath).openStream().use { 
-                                decodeAndResize(it)
-                            }
+                            java.net.URL(target.imageAssetPath).openStream().use { decodeAndResize(it) }
                         }
                         target.imageAssetPath.startsWith("/") || target.imageAssetPath.startsWith("file://") -> {
-                            val path = target.imageAssetPath.removePrefix("file://")
-                            decodeAndResizeFile(path)
+                            decodeAndResizeFile(target.imageAssetPath.removePrefix("file://"))
                         }
                         else -> {
-                            context.assets.open(target.imageAssetPath).use { 
-                                decodeAndResize(it)
-                            }
+                            context.assets.open(target.imageAssetPath).use { decodeAndResize(it) }
                         }
                     }
                     if (bitmap != null) target.name to bitmap else null
@@ -82,8 +94,6 @@ class ARVideoViewModel @Inject constructor(
                 }
             }
         }.awaitAll().filterNotNull().toMap()
-        
-        _bitmaps.value = loadedBitmaps
     }
 
     private fun decodeAndResize(inputStream: InputStream): Bitmap? {
@@ -136,6 +146,6 @@ class ARVideoViewModel @Inject constructor(
 
 sealed class ARUiState {
     object Loading : ARUiState()
-    data class Success(val targets: List<AugmentedVideo>) : ARUiState()
+    data class Success(val targets: List<AugmentedVideo>, val bitmaps: Map<String, Bitmap>) : ARUiState()
     data class Error(val message: String) : ARUiState()
 }

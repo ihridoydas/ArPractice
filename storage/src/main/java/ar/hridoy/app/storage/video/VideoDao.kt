@@ -24,4 +24,10 @@ interface VideoDao {
         clearVideos()
         insertVideos(videos)
     }
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun updateVideoLocal(video: AugmentedVideoEntity)
+
+    @Query("DELETE FROM augmented_videos WHERE id = :videoId")
+    suspend fun deleteVideoLocal(videoId: Int)
 }

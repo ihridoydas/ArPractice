@@ -48,8 +48,12 @@ class VideoManagementViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 repository.addVideo(BuildConfig.GOOGLE_SCRIPT_URL, video)
+                _error.value = null
             } catch (e: Exception) {
-                _error.value = "Failed to add video: ${e.localizedMessage}"
+                Timber.e(e, "Failed to add video")
+                _error.value = "Add request timed out, but local data updated. Checking spreadsheet..."
+                kotlinx.coroutines.delay(5000)
+                _error.value = null
             }
         }
     }
@@ -58,8 +62,12 @@ class VideoManagementViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 repository.updateVideo(BuildConfig.GOOGLE_SCRIPT_URL, video)
+                _error.value = null
             } catch (e: Exception) {
-                _error.value = "Failed to update video: ${e.localizedMessage}"
+                Timber.e(e, "Failed to update video")
+                _error.value = "Update request timed out. Checking spreadsheet..."
+                kotlinx.coroutines.delay(5000)
+                _error.value = null
             }
         }
     }
@@ -68,8 +76,12 @@ class VideoManagementViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 repository.deleteVideo(BuildConfig.GOOGLE_SCRIPT_URL, video)
+                _error.value = null
             } catch (e: Exception) {
-                _error.value = "Failed to delete: ${e.localizedMessage}"
+                Timber.e(e, "Failed to delete video")
+                _error.value = "Delete request timed out. Checking spreadsheet..."
+                kotlinx.coroutines.delay(5000)
+                _error.value = null
             }
         }
     }

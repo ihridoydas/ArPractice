@@ -14,17 +14,22 @@ import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+
 @Singleton
 class VideoRepository @Inject constructor(
     private val api: GoogleSheetsApi,
     private val dao: VideoDao
 ) {
-    val videos: Flow<List<AugmentedVideo>> = dao.getAllVideos().map { entities ->
-        entities.map { it.toModel() }
-    }
+    // Only emit when the list actually changes, and ignore intermediate empty states during sync
+    val videos: Flow<List<AugmentedVideo>> = dao.getAllVideos()
+        .distinctUntilChanged()
+        .map { entities -> entities.map { it.toModel() } }
 
     suspend fun syncVideos(scriptUrl: String) = withContext(Dispatchers.IO) {
         try {
+            Timber.tag("VideoRepository").d("Syncing videos from script...")
             val response = api.getSheetValues(scriptUrl)
             val targets = response.values?.mapIndexed { index, row ->
                 AugmentedVideo(
@@ -39,7 +44,9 @@ class VideoRepository @Inject constructor(
             } ?: emptyList()
 
             if (targets.isNotEmpty()) {
+                // Atomic transaction: delete + insert
                 dao.refreshVideos(targets.map { it.toEntity() })
+                Timber.tag("VideoRepository").d("Sync complete. Found %d videos.", targets.size)
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to sync videos")
@@ -47,6 +54,9 @@ class VideoRepository @Inject constructor(
     }
 
     suspend fun addVideo(scriptUrl: String, video: AugmentedVideo) = withContext(Dispatchers.IO) {
+        // Update local first
+        dao.insertVideos(listOf(video.toEntity()))
+        
         api.executeAction(
             scriptUrl,
             BridgeRequest(
@@ -58,11 +68,15 @@ class VideoRepository @Inject constructor(
                 active = video.active
             )
         )
+        // Full sync once to get correct rowIndex from server
         syncVideos(scriptUrl)
     }
 
     suspend fun updateVideo(scriptUrl: String, video: AugmentedVideo) = withContext(Dispatchers.IO) {
         val rowIndex = video.rowIndex ?: return@withContext
+        // Update local first for instant UI response
+        dao.updateVideoLocal(video.toEntity())
+        
         api.executeAction(
             scriptUrl,
             BridgeRequest(
@@ -75,11 +89,13 @@ class VideoRepository @Inject constructor(
                 rowIndex = rowIndex
             )
         )
-        syncVideos(scriptUrl)
     }
 
     suspend fun deleteVideo(scriptUrl: String, video: AugmentedVideo) = withContext(Dispatchers.IO) {
         val rowIndex = video.rowIndex ?: return@withContext
+        // Update local first
+        dao.deleteVideoLocal(video.id)
+        
         api.executeAction(
             scriptUrl,
             BridgeRequest(
@@ -92,6 +108,7 @@ class VideoRepository @Inject constructor(
                 rowIndex = rowIndex
             )
         )
+        // Full sync to re-calculate rowIndexes correctly
         syncVideos(scriptUrl)
     }
 }

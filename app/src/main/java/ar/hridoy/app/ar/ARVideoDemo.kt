@@ -32,6 +32,7 @@ import io.github.sceneview.rememberMaterialLoader
 import io.github.sceneview.rememberModelLoader
 import io.github.sceneview.ar.node.AugmentedImageNode
 import io.github.sceneview.node.VideoNode
+import io.github.sceneview.node.ViewNode
 import io.github.sceneview.rememberViewNodeManager
 import kotlinx.coroutines.delay
 import timber.log.Timber
@@ -84,7 +85,6 @@ fun ARVideoContent(
     viewModel: ARVideoViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val bitmaps by viewModel.bitmaps.collectAsState()
 
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
@@ -105,12 +105,13 @@ fun ARVideoContent(
         environmentLoader, "environments/studio_warm_2k.hdr", createSkybox = false,
     ) ?: rememberEnvironment(environmentLoader)
 
-    val onSessionConfiguration = remember(bitmaps.size, uiState) {
+    val onSessionConfiguration = remember(uiState) {
+        val successState = uiState as? ARUiState.Success
         { session: Session, config: Config ->
             config.planeFindingMode = Config.PlaneFindingMode.DISABLED
             config.augmentedImageDatabase = AugmentedImageDatabase(session).apply {
-                bitmaps.forEach { (name, bitmap) ->
-                    val target = (uiState as? ARUiState.Success)?.targets?.find { it.name == name }
+                successState?.bitmaps?.forEach { (name, bitmap) ->
+                    val target = successState.targets.find { it.name == name }
                     val width = target?.widthInMeters ?: 0.2f
                     addImage(name, bitmap, width)
                 }
@@ -169,196 +170,227 @@ fun ARVideoContent(
             is ARUiState.Success -> {
                 Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                     Box(modifier = Modifier.weight(1f)) {
-                        ARSceneView(
-                            modifier = Modifier.fillMaxSize(),
-                            engine = engine,
-                            modelLoader = modelLoader,
-                            materialLoader = materialLoader,
-                            environmentLoader = environmentLoader,
-                            environment = activeEnvironment,
-                            planeRenderer = false,
-                            viewNodeWindowManager = viewNodeManager,
-                            sessionConfiguration = onSessionConfiguration,
-                            onSessionUpdated = onSessionUpdated
-                        ) {
-                            detectedImages.forEach { image ->
-                                val videoTarget = state.targets.find { it.name == image.name } ?: return@forEach
-                                key(image.index) {
-                                    val isYouTube = remember(videoTarget.videoUrl) {
-                                        videoTarget.videoUrl.contains("youtube.com") || videoTarget.videoUrl.contains("youtu.be")
-                                    }
-                                    var isReady by remember { mutableStateOf(false) }
-                                    var playerError by remember { mutableStateOf<String?>(null) }
-                                    var isUserPaused by remember { mutableStateOf(false) }
-                                    var youTubePlayerInstance by remember { mutableStateOf<YouTubePlayer?>(null) }
+                        // FIX: Key on targets list hash so ANY change forces a session refresh
+                        key(state.targets.hashCode()) {
+                            ARSceneView(
+                                modifier = Modifier.fillMaxSize(),
+                                engine = engine,
+                                modelLoader = modelLoader,
+                                materialLoader = materialLoader,
+                                environmentLoader = environmentLoader,
+                                environment = activeEnvironment,
+                                planeRenderer = false,
+                                viewNodeWindowManager = viewNodeManager,
+                                sessionConfiguration = onSessionConfiguration,
+                                onSessionUpdated = onSessionUpdated
+                            ) {
+                                detectedImages.forEach { image ->
+                                    val videoTarget = state.targets.find { it.name == image.name } ?: return@forEach
+                                    key(image.index, videoTarget.videoUrl) {
+                                        val isYouTube = remember(videoTarget.videoUrl) {
+                                            videoTarget.videoUrl.contains("youtube.com") || videoTarget.videoUrl.contains("youtu.be")
+                                        }
+                                        var isReady by remember { mutableStateOf(false) }
+                                        var playerError by remember { mutableStateOf<String?>(null) }
+                                        var isUserPaused by remember { mutableStateOf(false) }
+                                        var retryCount by remember { mutableIntStateOf(0) }
+                                        var videoAspect by remember { mutableStateOf(16f / 9f) }
+                                        var youTubePlayerInstance by remember { mutableStateOf<YouTubePlayer?>(null) }
 
-                                    val currentTrackingState = trackingStates[image.index] ?: TrackingState.STOPPED
-                                    val currentTrackingMethod = trackingMethods[image.index] ?: AugmentedImage.TrackingMethod.NOT_TRACKING
-                                    
-                                    // Stability fix: Node stays drawn as long as ARCore is tracking the image path
-                                    val isNodeVisible = currentTrackingState == TrackingState.TRACKING
-                                    
-                                    // Only play/focus if it's the primary fully tracked image
-                                    val isInFocus = isNodeVisible &&
-                                                   currentTrackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING &&
-                                                   image.index == activeImageIndex
+                                        val currentTrackingState = trackingStates[image.index] ?: TrackingState.STOPPED
+                                        val currentTrackingMethod = trackingMethods[image.index] ?: AugmentedImage.TrackingMethod.NOT_TRACKING
+                                        
+                                        // Stability fix: Node stays drawn as long as ARCore is tracking the image path
+                                        val isNodeVisible = currentTrackingState == TrackingState.TRACKING
+                                        
+                                        // Only play/focus if it's the primary fully tracked image
+                                        val isInFocus = isNodeVisible &&
+                                                       currentTrackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING &&
+                                                       image.index == activeImageIndex
 
-                                    val player = if (!isYouTube) {
-                                        remember {
-                                            MediaPlayer().apply {
-                                                setAudioAttributes(
-                                                    AudioAttributes.Builder()
-                                                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                                                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                                                        .build()
-                                                )
-                                                isLooping = true
-                                                setVolume(0f, 0f)
-                                                try {
-                                                    // Optimization: Use direct file descriptor for local files
-                                                    if (videoTarget.videoUrl.startsWith("/")) {
-                                                        val file = File(videoTarget.videoUrl)
-                                                        val fis = java.io.FileInputStream(file)
-                                                        setDataSource(fis.fd)
-                                                        fis.close()
-                                                    } else {
-                                                        setDataSource(videoTarget.videoUrl)
+                                        val player = if (!isYouTube) {
+                                            remember(videoTarget.id, retryCount) {
+                                                MediaPlayer().apply {
+                                                    setAudioAttributes(
+                                                        AudioAttributes.Builder()
+                                                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                                                            .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                                                            .build()
+                                                    )
+                                                    isLooping = true
+                                                    setVolume(0f, 0f)
+                                                    try {
+                                                        if (videoTarget.videoUrl.startsWith("/")) {
+                                                            val file = File(videoTarget.videoUrl)
+                                                            if (file.exists()) {
+                                                                val fis = java.io.FileInputStream(file)
+                                                                setDataSource(fis.fd)
+                                                                fis.close()
+                                                            } else {
+                                                                playerError = "Local file not ready"
+                                                            }
+                                                        } else {
+                                                            setDataSource(videoTarget.videoUrl)
+                                                        }
+                                                        
+                                                        if (playerError == null) {
+                                                            setOnPreparedListener { 
+                                                                if (it.videoWidth > 0 && it.videoHeight > 0) {
+                                                                    videoAspect = it.videoWidth.toFloat() / it.videoHeight.toFloat()
+                                                                }
+                                                                isReady = true
+                                                                if (isPlaying && (trackingStates[image.index] == TrackingState.TRACKING) && !isUserPaused) {
+                                                                    start()
+                                                                }
+                                                            }
+                                                            setOnErrorListener { _, what, _ ->
+                                                                playerError = "Media Error: $what"
+                                                                true
+                                                            }
+                                                            prepareAsync()
+                                                        }
+                                                    } catch (e: Exception) { 
+                                                        playerError = e.localizedMessage
                                                     }
-                                                    
-                                                    setOnPreparedListener { 
-                                                        Timber.tag(TAG).d("Video prepared: %s", videoTarget.name)
-                                                        isReady = true
-                                                        if (isPlaying && isInFocus && !isUserPaused) start() 
-                                                    }
-                                                    setOnErrorListener { _, what, extra ->
-                                                        val msg = "MediaPlayer error: $what, $extra"
-                                                        Timber.tag(TAG).e("[%s] %s", videoTarget.name, msg)
-                                                        playerError = msg
-                                                        true
-                                                    }
-                                                    prepareAsync()
-                                                } catch (e: Exception) { 
-                                                    val msg = e.localizedMessage ?: "Unknown error"
-                                                    Timber.tag(TAG).e(e, "MediaPlayer setup failed: %s", videoTarget.name)
-                                                    playerError = msg
                                                 }
                                             }
+                                        } else null
+
+                                        DisposableEffect(Unit) { onDispose { player?.release() } }
+
+                                        LaunchedEffect(isInFocus, isPlaying, isUserPaused) {
+                                            val shouldPlay = isPlaying && isInFocus && !isUserPaused
+                                            if (isYouTube) {
+                                                if (shouldPlay) youTubePlayerInstance?.play() else youTubePlayerInstance?.pause()
+                                            } else {
+                                                if (shouldPlay && isReady) player?.start() else player?.pause()
+                                            }
                                         }
-                                    } else null
 
-                                    DisposableEffect(Unit) { onDispose { player?.release() } }
+                                        LaunchedEffect(isMuted) {
+                                            val v = if (isMuted) 0f else 1f
+                                            player?.setVolume(v, v)
+                                        }
 
-                                    LaunchedEffect(isInFocus, isPlaying, isUserPaused) {
-                                        val shouldPlay = isPlaying && isInFocus && !isUserPaused
-                                        if (isYouTube) {
-                                            if (shouldPlay) youTubePlayerInstance?.play() else youTubePlayerInstance?.pause()
+                                        val imageWidth = image.extentX.takeIf { it > 0 } ?: 0.2f
+                                        val imageHeight = image.extentZ.takeIf { it > 0 } ?: (imageWidth / (16f / 9f))
+
+                                        val finalWidth: Float
+                                        val finalHeight: Float
+
+                                        if (imageWidth / imageHeight > videoAspect) {
+                                            finalHeight = imageHeight
+                                            finalWidth = imageHeight * videoAspect
                                         } else {
-                                            if (shouldPlay && isReady) player?.start() else player?.pause()
-                                        }
-                                    }
-
-                                    LaunchedEffect(isMuted) {
-                                        val v = if (isMuted) 0f else 1f
-                                        player?.setVolume(v, v)
-                                    }
-
-                                    val videoAspect = 16f/9f
-                                    val finalWidth = image.extentX.takeIf { it > 0 } ?: 0.2f
-                                    val finalHeight = finalWidth / videoAspect
-
-                                    AugmentedImageNode(
-                                        augmentedImage = image,
-                                        applyImageScale = false,
-                                        apply = { isVisible = isNodeVisible }
-                                    ) {
-                                        if (isYouTube) {
-                                            YouTubeNode(
-                                                videoUrl = videoTarget.videoUrl,
-                                                windowManager = viewNodeManager,
-                                                autoPlay = isPlaying && isInFocus,
-                                                mute = isMuted,
-                                                size = Size(finalWidth, finalHeight),
-                                                position = Float3(0f, 0.01f, 0f),
-                                                rotation = Float3(-90f, 0f, 0f),
-                                                apply = {
-                                                    onReady = { player -> 
-                                                        youTubePlayerInstance = player
-                                                        isReady = true 
-                                                    }
-                                                    onSingleTapUp = { _ -> 
-                                                        isUserPaused = !isUserPaused
-                                                        true 
-                                                    }
-                                                }
-                                            )
-                                        } else if (player != null) {
-                                            VideoNode(
-                                                player = player,
-                                                chromaKeyColor = if (useChromaKey) 0xFF00FF00.toInt() else null,
-                                                size = Size(finalWidth, finalHeight),
-                                                position = Float3(0f, 0.01f, 0f),
-                                                rotation = Float3(-90f, 0f, 0f),
-                                                apply = {
-                                                    onSingleTapUp = { _ ->
-                                                        isUserPaused = !isUserPaused
-                                                        true
-                                                    }
-                                                }
-                                            )
+                                            finalWidth = imageWidth
+                                            finalHeight = imageWidth / videoAspect
                                         }
 
-                                        // 🔹 Loading Overlay
-                                        if (!isReady) {
-                                            ViewNode(
-                                                windowManager = viewNodeManager,
-                                                unlit = true,
-                                                position = Float3(0f, 0.01f, 0f),
-                                                rotation = Float3(-90f, 0f, 0f),
-                                                apply = {
-                                                    isTouchable = false
-                                                    pxPerUnits = 2000f
-                                                }
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier.size(40.dp),
-                                                    contentAlignment = Alignment.Center
+                                        AugmentedImageNode(
+                                            augmentedImage = image,
+                                            applyImageScale = false,
+                                            apply = { 
+                                                isVisible = isNodeVisible 
+                                                isTouchable = false
+                                            }
+                                        ) {
+                                            if (isYouTube) {
+                                                YouTubeNode(
+                                                    videoUrl = videoTarget.videoUrl,
+                                                    windowManager = viewNodeManager,
+                                                    autoPlay = isPlaying && isInFocus,
+                                                    mute = isMuted,
+                                                    size = Size(finalWidth, finalHeight),
+                                                    position = Float3(0f, 0.01f, 0f),
+                                                    rotation = Float3(-90f, 0f, 0f),
+                                                    apply = {
+                                                        onReady = { player -> 
+                                                            youTubePlayerInstance = player
+                                                            isReady = true 
+                                                        }
+                                                        onSingleTapUp = { _ -> 
+                                                            isUserPaused = !isUserPaused
+                                                            true 
+                                                        }
+                                                    }
+                                                )
+                                            } else if (player != null) {
+                                                VideoNode(
+                                                    player = player,
+                                                    chromaKeyColor = if (useChromaKey) 0xFF00FF00.toInt() else null,
+                                                    size = Size(finalWidth, finalHeight),
+                                                    position = Float3(0f, 0.01f, 0f),
+                                                    rotation = Float3(-90f, 0f, 0f),
+                                                    apply = {
+                                                        onSingleTapUp = { _ ->
+                                                            isUserPaused = !isUserPaused
+                                                            true
+                                                        }
+                                                    }
+                                                )
+                                            }
+
+                                            if (!isReady) {
+                                                ViewNode(
+                                                    windowManager = viewNodeManager,
+                                                    unlit = true,
+                                                    position = Float3(0f, 0.011f, 0f),
+                                                    rotation = Float3(-90f, 0f, 0f),
+                                                    apply = {
+                                                        isTouchable = true
+                                                        pxPerUnits = 2000f
+                                                        onSingleTapUp = {
+                                                            if (playerError != null) {
+                                                                playerError = null
+                                                                retryCount++
+                                                                true
+                                                            } else false
+                                                        }
+                                                    }
                                                 ) {
-                                                    if (playerError != null) {
-                                                        Icon(Icons.Default.Error, null, tint = Color.Red)
-                                                    } else {
-                                                        CircularProgressIndicator(
-                                                            modifier = Modifier.size(24.dp),
-                                                            strokeWidth = 2.dp
+                                                    Box(
+                                                        modifier = Modifier.size(40.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        if (playerError != null) {
+                                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                                Icon(Icons.Default.Error, null, tint = Color.Red)
+                                                                Text("Tap to retry", style = MaterialTheme.typography.bodySmall, color = Color.Red)
+                                                            }
+                                                        } else {
+                                                            CircularProgressIndicator(
+                                                                modifier = Modifier.size(24.dp),
+                                                                strokeWidth = 2.dp
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            val shouldShowPause = (isUserPaused || !isPlaying) && isReady
+                                            if (shouldShowPause) {
+                                                ViewNode(
+                                                    windowManager = viewNodeManager,
+                                                    unlit = true,
+                                                    position = Float3(finalWidth / 2f - 0.012f, 0.015f, -finalHeight / 2f + 0.012f),
+                                                    rotation = Float3(-90f, 0f, 0f),
+                                                    apply = {
+                                                        isTouchable = false
+                                                        pxPerUnits = 2500f
+                                                    }
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier.size(20.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Pause,
+                                                            contentDescription = "Paused",
+                                                            tint = Color.Blue,
+                                                            modifier = Modifier.size(15.dp)
+                                                                .background(color = Color.White)
                                                         )
                                                     }
-                                                }
-                                            }
-                                        }
-
-                                        // 🔹 Pause Icon Overlay
-                                        val shouldShowPause = (isUserPaused || !isPlaying) && isReady
-                                        if (shouldShowPause) {
-                                            ViewNode(
-                                                windowManager = viewNodeManager,
-                                                unlit = true,
-                                                position = Float3(finalWidth / 2f - 0.012f, 0.015f, -finalHeight / 2f + 0.012f),
-                                                rotation = Float3(-90f, 0f, 0f),
-                                                apply = {
-                                                    isTouchable = false
-                                                    pxPerUnits = 2500f
-                                                }
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier.size(20.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Pause,
-                                                        contentDescription = "Paused",
-                                                        tint = Color.Blue,
-                                                        modifier = Modifier.size(15.dp)
-                                                            .background(color = Color.White)
-                                                    )
                                                 }
                                             }
                                         }
@@ -368,7 +400,6 @@ fun ARVideoContent(
                         }
                     }
 
-                    // Controls
                     PlaybackControls(
                         isPlaying = isPlaying,
                         onTogglePlay = { isPlaying = !isPlaying },
