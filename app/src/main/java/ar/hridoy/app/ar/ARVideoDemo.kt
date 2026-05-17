@@ -118,17 +118,17 @@ fun ARVideoDemo(
         fetchError = null
         try {
             withTimeout(10000) { // 10 second timeout
-                Timber.tag(TAG).d("Fetching spreadsheet data from ${BuildConfig.SPREADSHEET_ID}")
+                Timber.tag(TAG).d("Fetching spreadsheet data from Script")
                 val moshi = Moshi.Builder()
                     .add(KotlinJsonAdapterFactory())
                     .build()
                 val retrofit = Retrofit.Builder()
-                    .baseUrl("https://sheets.googleapis.com/")
+                    .baseUrl("https://sheets.googleapis.com/") // Base doesn't matter much now
                     .addConverterFactory(MoshiConverterFactory.create(moshi))
                     .build()
                 val api = retrofit.create(GoogleSheetsApi::class.java)
                 
-                val response = api.getSheetValues(BuildConfig.SPREADSHEET_ID, "Sheet1!A2:E20", BuildConfig.GOOGLE_API_KEY)
+                val response = api.getSheetValues(BuildConfig.GOOGLE_SCRIPT_URL)
                 
                 val values = response.values
                 if (values == null || values.isEmpty()) {

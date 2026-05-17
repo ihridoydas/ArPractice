@@ -6,5 +6,6 @@ data class AugmentedVideo(
     val imageAssetPath: String,
     val videoUrl: String,
     val active: Boolean,
-    val widthInMeters: Float = 0.2f
+    val widthInMeters: Float = 0.2f,
+    val rowIndex: Int? = null
 )
