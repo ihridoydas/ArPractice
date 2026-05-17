@@ -36,41 +36,48 @@ object Utils {
         context: Context,
         language: Language,
     ) {
-        if (language == Language.SYSTEM) {
-            val telephonyManager =
-                context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        val targetCode = when (language) {
+            Language.SYSTEM -> {
+                val telephonyManager =
+                    context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
 
-            val countryIso = telephonyManager
-                ?.networkCountryIso
-                ?.takeIf { it.isNotBlank() }
-                ?.uppercase()
+                val countryIso = telephonyManager
+                    ?.networkCountryIso
+                    ?.takeIf { it.isNotBlank() }
+                    ?.uppercase()
 
-            val code = when (countryIso) {
-                "BD" -> "bn"
-                "JP" -> "ja"
-                else -> Locale.getDefault().language
+                when (countryIso) {
+                    "BD" -> "bn"
+                    "JP" -> "ja"
+                    else -> Locale.getDefault().language
+                }
             }
-
-            AppCompatDelegate.setApplicationLocales(
-                LocaleListCompat.forLanguageTags(code),
-            )
-            return
-        }
-
-        val code = when (language) {
             Language.ENGLISH -> "en"
             Language.JAPANESE -> "ja"
             Language.BENGALI -> "bn"
-            Language.UNRECOGNIZED -> "en"
+            else -> "en"
         }
 
-        AppCompatDelegate.setApplicationLocales(
-            LocaleListCompat.forLanguageTags(code),
-        )
+        val currentLocales = AppCompatDelegate.getApplicationLocales()
+        val currentCode = if (!currentLocales.isEmpty) currentLocales.get(0)?.language else null
+
+        // Log to debug
+        // android.util.Log.d("LanguageSync", "Current: $currentCode, Target: $targetCode")
+
+        if (currentCode != targetCode) {
+            AppCompatDelegate.setApplicationLocales(
+                LocaleListCompat.forLanguageTags(targetCode),
+            )
+        }
     }
 
     fun changeLanguage(code: String) {
-        val appLocale = LocaleListCompat.forLanguageTags(code)
-        AppCompatDelegate.setApplicationLocales(appLocale)
+        val currentLocales = AppCompatDelegate.getApplicationLocales()
+        val currentCode = if (!currentLocales.isEmpty) currentLocales.get(0)?.language else null
+
+        if (currentCode != code) {
+            val appLocale = LocaleListCompat.forLanguageTags(code)
+            AppCompatDelegate.setApplicationLocales(appLocale)
+        }
     }
 }

@@ -4,11 +4,8 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import ar.hridoy.app.BuildConfig
 import ar.hridoy.app.common.model.AugmentedVideo
-import ar.hridoy.app.network.GoogleSheetsApi
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import ar.hridoy.app.storage.repository.VideoRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -16,16 +13,16 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import retrofit2.Retrofit
-import retrofit2.converter.moshi.MoshiConverterFactory
 import timber.log.Timber
 import javax.inject.Inject
 
 @HiltViewModel
 class ARVideoViewModel @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val repository: VideoRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<ARUiState>(ARUiState.Loading)
@@ -34,46 +31,23 @@ class ARVideoViewModel @Inject constructor(
     private val _bitmaps = MutableStateFlow<Map<String, android.graphics.Bitmap>>(emptyMap())
     val bitmaps = _bitmaps.asStateFlow()
 
-    private val api: GoogleSheetsApi by lazy {
-        val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
-        Retrofit.Builder()
-            .baseUrl("https://sheets.googleapis.com/")
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-            .create(GoogleSheetsApi::class.java)
-    }
-
     init {
-        fetchData()
+        observeVideos()
     }
 
-    fun fetchData() {
+    private fun observeVideos() {
         viewModelScope.launch {
-            _uiState.value = ARUiState.Loading
-            try {
-                val response = api.getSheetValues(BuildConfig.GOOGLE_SCRIPT_URL)
-                val targets = response.values?.filter { it.size >= 5 && it[4].trim().lowercase() == "true" }
-                    ?.map { row ->
-                        AugmentedVideo(
-                            id = row[0].toIntOrNull() ?: 0,
-                            name = row[1],
-                            imageAssetPath = row[2],
-                            videoUrl = row[3],
-                            active = true,
-                            widthInMeters = row.getOrNull(5)?.toFloatOrNull() ?: 0.2f
-                        )
-                    } ?: emptyList()
-
-                if (targets.isEmpty()) {
-                    _uiState.value = ARUiState.Error("No active videos found in spreadsheet")
-                    return@launch
+            repository.videos.collectLatest { targets ->
+                val activeTargets = targets.filter { it.active }
+                if (activeTargets.isNotEmpty()) {
+                    loadBitmaps(activeTargets)
+                    _uiState.value = ARUiState.Success(activeTargets)
+                } else if (_uiState.value is ARUiState.Loading) {
+                    // Still loading or DB is empty
+                    // Don't auto-sync here to avoid loops, let HomeScreen handle it
+                    // But if we are still in Loading state and DB is empty, show a message
+                    _uiState.value = ARUiState.Error("No videos found. Please wait for sync or check spreadsheet.")
                 }
-
-                loadBitmaps(targets)
-                _uiState.value = ARUiState.Success(targets)
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to fetch AR data")
-                _uiState.value = ARUiState.Error(e.localizedMessage ?: "Unknown network error")
             }
         }
     }

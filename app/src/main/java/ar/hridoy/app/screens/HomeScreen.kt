@@ -38,6 +38,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
 import ar.hridoy.app.R
 import ar.hridoy.app.datastore.ThemePreferences
@@ -61,11 +63,16 @@ fun HomeScreen(
     navigator: Navigator,
     languageDataStore: LanguageDataStore,
     themeDataStore: ThemeLocalDataStore,
+    viewModel: HomeViewModel = hiltViewModel()
 ) {
     val themeMode by themeDataStore.themeMode
         .collectAsState(initial = ThemePreferences.ThemeMode.SYSTEM)
 
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        viewModel.syncData()
+    }
 
     Box(
         modifier = Modifier

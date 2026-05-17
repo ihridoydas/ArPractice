@@ -46,12 +46,11 @@ import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import ar.hridoy.app.common.DURATION
 import ar.hridoy.app.common.VALUES_X
 import ar.hridoy.app.common.VALUES_Y
 import ar.hridoy.app.common.utils.RootUtil
+import ar.hridoy.app.datastore.Language
 import ar.hridoy.app.datastore.ThemePreferences
 import ar.hridoy.app.local.language.LanguageDataStore
 import ar.hridoy.app.local.theme.ThemeLocalDataStore
@@ -121,14 +120,16 @@ class MainActivity : AppCompatActivity() {
 
         enableEdgeToEdge()
 
-        runBlocking {
-            val language = languageDataStore.getLanguage.first()
-            Utils.applyLanguage(this@MainActivity, language)
-        }
-
         setContent {
+            val languageState = languageDataStore.getLanguage.collectAsState(initial = null)
             val themeMode by themeDataStore.themeMode
                 .collectAsState(initial = ThemePreferences.ThemeMode.SYSTEM)
+
+            languageState.value?.let { language ->
+                LaunchedEffect(language) {
+                    Utils.applyLanguage(this@MainActivity, language)
+                }
+            }
 
             val isDarkTheme = when (themeMode) {
                 ThemePreferences.ThemeMode.DARK -> true
