@@ -29,48 +29,61 @@ import android.telephony.TelephonyManager
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import ar.hridoy.app.datastore.Language
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 object Utils {
-    fun applyLanguage(
+    suspend fun applyLanguage(
         context: Context,
         language: Language,
     ) {
-        if (language == Language.SYSTEM) {
-            val telephonyManager =
-                context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        val targetCode = if (language == Language.SYSTEM) {
+            withContext(Dispatchers.IO) {
+                val telephonyManager =
+                    context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
 
-            val countryIso = telephonyManager
-                ?.networkCountryIso
-                ?.takeIf { it.isNotBlank() }
-                ?.uppercase()
+                val countryIso = telephonyManager
+                    ?.networkCountryIso
+                    ?.takeIf { it.isNotBlank() }
+                    ?.uppercase()
 
-            val code = when (countryIso) {
-                "BD" -> "bn"
-                "JP" -> "ja"
-                else -> Locale.getDefault().language
+                when (countryIso) {
+                    "BD" -> "bn"
+                    "JP" -> "ja"
+                    else -> Locale.getDefault().language
+                }
             }
-
-            AppCompatDelegate.setApplicationLocales(
-                LocaleListCompat.forLanguageTags(code),
-            )
-            return
+        } else {
+            when (language) {
+                Language.ENGLISH -> "en"
+                Language.JAPANESE -> "ja"
+                Language.BENGALI -> "bn"
+                else -> "en"
+            }
         }
 
-        val code = when (language) {
-            Language.ENGLISH -> "en"
-            Language.JAPANESE -> "ja"
-            Language.BENGALI -> "bn"
-            Language.UNRECOGNIZED -> "en"
-        }
+        withContext(Dispatchers.Main) {
+            val currentLocales = AppCompatDelegate.getApplicationLocales()
+            val currentCode = if (!currentLocales.isEmpty) currentLocales.get(0)?.language else null
 
-        AppCompatDelegate.setApplicationLocales(
-            LocaleListCompat.forLanguageTags(code),
-        )
+            if (currentCode != targetCode) {
+                AppCompatDelegate.setApplicationLocales(
+                    LocaleListCompat.forLanguageTags(targetCode),
+                )
+            }
+        }
     }
 
-    fun changeLanguage(code: String) {
-        val appLocale = LocaleListCompat.forLanguageTags(code)
-        AppCompatDelegate.setApplicationLocales(appLocale)
+    suspend fun changeLanguage(code: String) {
+        withContext(Dispatchers.Main) {
+            val currentLocales = AppCompatDelegate.getApplicationLocales()
+            val currentCode = if (!currentLocales.isEmpty) currentLocales.get(0)?.language else null
+
+            if (currentCode != code) {
+                val appLocale = LocaleListCompat.forLanguageTags(code)
+                AppCompatDelegate.setApplicationLocales(appLocale)
+            }
+        }
     }
 }
